@@ -3,7 +3,7 @@ import {useState} from "react";
 function App() {
     const [orders, setOrders] = useState([]);
 
-    const [id]
+    const [id, setId] = useState("");
 
     const [customerName, setCustomerName] = useState("");
     const [productName, setProductName] = useState("");
@@ -31,17 +31,28 @@ function App() {
             .then((res) => res.json()).then(() => loadOrders())
 
     }
-    function deleteOrder(){
-        fetch("http://localhost:8080/api/orders",
-            method: "DELETE", body:JSON.stringify({
-
-        })
-
+    function deleteOrder(id){
+        if (id === "") return;
+        fetch(`http://localhost:8080/api/orders/${id}`, {
+            method: "DELETE"})
+            .then((res) =>{
+                if(res.ok){
+                    loadOrders();
+                }
+                else{
+                    alert("Order not Found");
+                }
+            })
     }
 
 
     return (<div>
         <label>
+            <input name="Id"
+                   placeholder="Id"
+                   value={id}
+                   onChange={(e) => setId(e.target.value)}
+            />
             <input name="Customer Name"
                    placeholder="customer Name"
                    value={customerName}
@@ -63,8 +74,11 @@ function App() {
                    onChange={(e) => setQuantity(e.target.value)}
             />
         </label>
-        <button onClick={createOrder}>Create an Order</button>
+
+
+        <button onClick={createOrder}>Create an order</button>
         <button onClick={loadOrders}>Show all orders</button>
+        <button onClick={() => deleteOrder(id)}>Delete</button>
         <h1>My Orders</h1>
         <ul>
             {orders.map((order) => (<li key={order.id}>
