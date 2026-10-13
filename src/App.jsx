@@ -17,8 +17,6 @@ function App() {
 
     }
 
-
-
     function createOrder() {
         fetch("http://localhost:8080/api/orders", {
             method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({
