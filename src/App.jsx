@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Header from './Header.jsx'
 
 const emptyForm = {
@@ -43,6 +43,9 @@ function App() {
   const [loadingDetails, setLoadingDetails] = useState(false)
   const [status, setStatus] = useState(null)
   const [formError, setFormError] = useState('')
+  const [query, setQuery] = useState('')
+  const [searchState, setSearchState] = useState({ term: null, results: [], status: 'idle' })
+  const searchSeqRef = useRef(0)
 
   const showStatus = (type, message) => {
     setStatus({ type, message })
@@ -64,8 +67,56 @@ function App() {
   }, [])
 
   useEffect(() => {
-    loadOrders({ silent: true })
-  }, [loadOrders])
+    let cancelled = false
+    fetch('/api/orders')
+      .then((res) => {
+        if (!res.ok) throw new Error(`Could not load orders (${res.status})`)
+        return res.json()
+      })
+      .then((data) => {
+        if (!cancelled) setOrders(Array.isArray(data) ? data : [])
+      })
+      .catch((error) => {
+        if (!cancelled) showStatus('error', error.message || 'Could not load orders')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const runSearch = useCallback(async (term) => {
+    const seq = searchSeqRef.current + 1
+    searchSeqRef.current = seq
+    setSearchState((current) => ({
+      term,
+      results: current.term === term ? current.results : [],
+      status: 'loading',
+    }))
+    try {
+      const res = await fetch(`/api/orders/search?query=${encodeURIComponent(term)}`)
+      if (!res.ok) throw new Error(`Search failed (${res.status})`)
+      const data = await res.json()
+      if (seq !== searchSeqRef.current) return
+      setSearchState({ term, results: Array.isArray(data) ? data : [], status: 'done' })
+    } catch (error) {
+      if (seq !== searchSeqRef.current) return
+      setSearchState({ term, results: [], status: 'done' })
+      showStatus('error', error.message || 'Could not search orders')
+    }
+  }, [])
+
+  useEffect(() => {
+    const term = query.trim()
+    if (!term) return undefined
+    const timer = setTimeout(() => runSearch(term), 350)
+    return () => clearTimeout(timer)
+  }, [query, runSearch])
+
+  async function refreshOrders(options) {
+    await loadOrders(options)
+    const term = query.trim()
+    if (term) await runSearch(term)
+  }
 
   const selectOrder = useCallback(async (id, fallback) => {
     if (id == null || id === '') return
@@ -138,7 +189,7 @@ function App() {
       const created = await res.json().catch(() => null)
       setForm(emptyForm)
       showStatus('ok', 'Order created')
-      await loadOrders({ silent: true })
+      await refreshOrders({ silent: true })
       if (created?.id != null) {
         selectOrder(created.id, created)
       }
@@ -167,7 +218,7 @@ function App() {
         setSelectedId(null)
         setSelectedOrder(null)
       }
-      await loadOrders({ silent: true })
+      await refreshOrders({ silent: true })
     } catch (error) {
       showStatus('error', error.message || 'Could not delete order')
     } finally {
@@ -186,21 +237,40 @@ function App() {
     selectOrder(id, fromList)
   }
 
+  const term = query.trim()
+  const searchActive = term !== ''
+  const currentResults = searchState.term === term ? searchState.results : null
+  const searching = searchActive && (currentResults === null || searchState.status === 'loading')
+  // While a new term is loading, keep the previous matches on screen (dimmed).
+  const displayedSource = searchActive ? (currentResults ?? searchState.results) : orders
+
   const sortedOrders = useMemo(() => {
-    return [...orders].sort((a, b) => {
+    return [...displayedSource].sort((a, b) => {
       const aTime = new Date(a.createdDate).getTime()
       const bTime = new Date(b.createdDate).getTime()
       if (Number.isNaN(aTime) || Number.isNaN(bTime)) return Number(b.id) - Number(a.id)
       return bTime - aTime
     })
-  }, [orders])
+  }, [displayedSource])
 
   const details = selectedOrder
   const detailsTotal = details ? lineTotal(details) : null
+  const shownCount = searchActive ? sortedOrders.length : orders.length
+
+  let listCaption = 'Select a row for details, or look up an id.'
+  if (searching) listCaption = 'Searching…'
+  else if (searchActive) {
+    listCaption = `${shownCount} ${shownCount === 1 ? 'match' : 'matches'} for “${term}”`
+  }
+
+  let emptyMessage = 'No orders yet. Create one to get started.'
+  if (loadingList) emptyMessage = 'Loading orders…'
+  else if (searching) emptyMessage = 'Searching…'
+  else if (searchActive) emptyMessage = `No orders match “${term}”.`
 
   return (
     <div className="app-shell">
-      <Header orderCount={orders.length} />
+      <Header orderCount={shownCount} />
 
       {status && (
         <p className={`banner banner-${status.type}`} role="status">
@@ -269,10 +339,31 @@ function App() {
           <div className="panel-toolbar">
             <div>
               <h2 id="list-heading">All orders</h2>
-              <p className="muted">Select a row for details, or look up an id.</p>
+              <p className="muted">{listCaption}</p>
             </div>
-            <button type="button" className="btn-ghost" onClick={() => loadOrders()} disabled={loadingList}>
+            <button type="button" className="btn-ghost" onClick={() => refreshOrders()} disabled={loadingList}>
               {loadingList ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+
+          <div className="search-row">
+            <label>
+              Search orders
+              <input
+                type="search"
+                name="search"
+                placeholder="Customer or product name…"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => setQuery('')}
+              disabled={!query}
+            >
+              Clear
             </button>
           </div>
 
@@ -292,11 +383,9 @@ function App() {
           </form>
 
           {sortedOrders.length === 0 ? (
-            <p className="empty">
-              {loadingList ? 'Loading orders…' : 'No orders yet. Create one to get started.'}
-            </p>
+            <p className="empty">{emptyMessage}</p>
           ) : (
-            <div className="table-wrap">
+            <div className={`table-wrap${searching ? ' is-searching' : ''}`}>
               <table>
                 <thead>
                   <tr>
