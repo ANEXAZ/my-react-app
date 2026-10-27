@@ -151,7 +151,8 @@ label {
   text-align: left;
 }
 
-input {
+input,
+select {
   width: 100%;
   border: 1px solid var(--line);
   background: #fff;
@@ -160,7 +161,8 @@ input {
   padding: 10px 12px;
 }
 
-input:focus {
+input:focus,
+select:focus {
   outline: 2px solid color-mix(in srgb, var(--accent) 45%, white);
   border-color: var(--accent);
 }
@@ -198,9 +200,45 @@ input:focus {
   flex: 1;
 }
 
-.table-wrap.is-searching {
+.table-wrap.is-busy {
   opacity: 0.6;
   pointer-events: none;
+}
+
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.pagination-summary {
+  white-space: nowrap;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pagination-controls .btn-ghost {
+  padding: 9px 12px;
+}
+
+.page-indicator {
+  align-self: center;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  white-space: nowrap;
+}
+
+.page-size select {
+  width: auto;
 }
 
 button {
@@ -322,6 +360,7 @@ dd {
   .lookup,
   .search-row,
   .panel-toolbar,
+  .pagination,
   .detail-actions {
     flex-direction: column;
     align-items: stretch;
@@ -349,6 +388,7 @@ dd {
   }
 
   input,
+  select,
   .btn-secondary,
   .btn-ghost {
     background: #2a251f;

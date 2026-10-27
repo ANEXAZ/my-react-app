@@ -6,7 +6,7 @@ function Header({ orderCount }) {
         <h1>Orders</h1>
       </div>
       <p className="header-meta">
-        {orderCount === 1 ? '1 order' : `${orderCount} orders`}
+        {orderCount === 1 ? '1 order' : `${orderCount.toLocaleString()} orders`}
       </p>
     </header>
   )

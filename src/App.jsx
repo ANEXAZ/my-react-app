@@ -1,11 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Header from './Header.jsx'
+import Pagination from './Pagination.jsx'
+
+const PAGE_SIZE = 10
 
 const emptyForm = {
   customerName: '',
   productName: '',
   price: '',
   quantity: '',
+}
+
+function parsePage(data, fallbackPage) {
+  const content = Array.isArray(data?.content) ? data.content : []
+  return {
+    content,
+    page: Number.isInteger(data?.number) ? data.number : fallbackPage,
+    size: Number(data?.size) || PAGE_SIZE,
+    totalElements: Number(data?.totalElements) || content.length,
+    totalPages: Math.max(Number(data?.totalPages) || (content.length ? 1 : 0), 1),
+  }
 }
 
 function formatMoney(value) {
@@ -33,6 +47,12 @@ function lineTotal(order) {
 
 function App() {
   const [orders, setOrders] = useState([])
+  const [pageInfo, setPageInfo] = useState({
+    page: 0,
+    size: PAGE_SIZE,
+    totalElements: 0,
+    totalPages: 0,
+  })
   const [form, setForm] = useState(emptyForm)
   const [selectedId, setSelectedId] = useState(null)
   const [selectedOrder, setSelectedOrder] = useState(null)
@@ -51,13 +71,27 @@ function App() {
     setStatus({ type, message })
   }
 
-  const loadOrders = useCallback(async ({ silent } = {}) => {
-    if (!silent) setLoadingList(true)
+  const loadOrders = useCallback(async (page = 0, size = PAGE_SIZE, { silent = false } = {}) => {
+    setLoadingList(true)
     try {
-      const res = await fetch('/api/orders')
-      if (!res.ok) throw new Error(`Could not load orders (${res.status})`)
-      const data = await res.json()
-      setOrders(Array.isArray(data) ? data : [])
+      let targetPage = page
+      let parsed
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const res = await fetch(`/api/orders?page=${targetPage}&size=${size}`)
+        if (!res.ok) throw new Error(`Could not load orders (${res.status})`)
+        parsed = parsePage(await res.json(), targetPage)
+        // The page we asked for may no longer exist (e.g. after a delete) — fall back to the last page.
+        const pageGone = parsed.content.length === 0 && targetPage > 0 && targetPage >= parsed.totalPages
+        if (!pageGone) break
+        targetPage = Math.max(0, parsed.totalPages - 1)
+      }
+      setOrders(parsed.content)
+      setPageInfo({
+        page: parsed.page,
+        size: parsed.size,
+        totalElements: parsed.totalElements,
+        totalPages: parsed.totalPages,
+      })
       if (!silent) showStatus('ok', 'Orders updated')
     } catch (error) {
       showStatus('error', error.message || 'Could not load orders')
@@ -68,13 +102,21 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/orders')
+    fetch(`/api/orders?page=0&size=${PAGE_SIZE}`)
       .then((res) => {
         if (!res.ok) throw new Error(`Could not load orders (${res.status})`)
         return res.json()
       })
       .then((data) => {
-        if (!cancelled) setOrders(Array.isArray(data) ? data : [])
+        if (cancelled) return
+        const parsed = parsePage(data, 0)
+        setOrders(parsed.content)
+        setPageInfo({
+          page: parsed.page,
+          size: parsed.size,
+          totalElements: parsed.totalElements,
+          totalPages: parsed.totalPages,
+        })
       })
       .catch((error) => {
         if (!cancelled) showStatus('error', error.message || 'Could not load orders')
@@ -112,10 +154,10 @@ function App() {
     return () => clearTimeout(timer)
   }, [query, runSearch])
 
-  async function refreshOrders(options) {
-    await loadOrders(options)
-    const term = query.trim()
-    if (term) await runSearch(term)
+  async function refreshOrders({ page = pageInfo.page, size = pageInfo.size, silent = true } = {}) {
+    await loadOrders(page, size, { silent })
+    const activeTerm = query.trim()
+    if (activeTerm) await runSearch(activeTerm)
   }
 
   const selectOrder = useCallback(async (id, fallback) => {
@@ -189,7 +231,9 @@ function App() {
       const created = await res.json().catch(() => null)
       setForm(emptyForm)
       showStatus('ok', 'Order created')
-      await refreshOrders({ silent: true })
+      // New orders land on the last page, so jump there to show the result.
+      const lastPage = Math.max(0, Math.ceil((pageInfo.totalElements + 1) / pageInfo.size) - 1)
+      await refreshOrders({ page: lastPage, silent: true })
       if (created?.id != null) {
         selectOrder(created.id, created)
       }
@@ -255,7 +299,7 @@ function App() {
 
   const details = selectedOrder
   const detailsTotal = details ? lineTotal(details) : null
-  const shownCount = searchActive ? sortedOrders.length : orders.length
+  const shownCount = searchActive ? sortedOrders.length : pageInfo.totalElements
 
   let listCaption = 'Select a row for details, or look up an id.'
   if (searching) listCaption = 'Searching…'
@@ -341,7 +385,7 @@ function App() {
               <h2 id="list-heading">All orders</h2>
               <p className="muted">{listCaption}</p>
             </div>
-            <button type="button" className="btn-ghost" onClick={() => refreshOrders()} disabled={loadingList}>
+            <button type="button" className="btn-ghost" onClick={() => refreshOrders({ silent: false })} disabled={loadingList}>
               {loadingList ? 'Refreshing…' : 'Refresh'}
             </button>
           </div>
@@ -385,7 +429,7 @@ function App() {
           {sortedOrders.length === 0 ? (
             <p className="empty">{emptyMessage}</p>
           ) : (
-            <div className={`table-wrap${searching ? ' is-searching' : ''}`}>
+            <div className={`table-wrap${loadingList || searching ? ' is-busy' : ''}`}>
               <table>
                 <thead>
                   <tr>
@@ -432,6 +476,18 @@ function App() {
                 </tbody>
               </table>
             </div>
+          )}
+
+          {!searchActive && (
+            <Pagination
+              page={pageInfo.page}
+              size={pageInfo.size}
+              totalPages={pageInfo.totalPages}
+              totalElements={pageInfo.totalElements}
+              disabled={loadingList || searching}
+              onPage={(nextPage) => refreshOrders({ page: nextPage })}
+              onSizeChange={(nextSize) => refreshOrders({ page: 0, size: nextSize })}
+            />
           )}
         </section>
       </div>
